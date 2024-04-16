@@ -1,5 +1,0 @@
-
-{{rcat shell|
-{{R from move}}
-{{R from CamelCase}}
-{{R unprintworthy}}
