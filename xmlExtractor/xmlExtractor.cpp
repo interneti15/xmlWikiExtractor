@@ -1,11 +1,19 @@
-﻿#include <chrono>
+﻿#define  _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS true
+#include <filesystem>
+#include <chrono>
 #include <codecvt>
 #include <iostream>
 #include <fstream>
 #include <regex>
 #include <string>
+#include <windows.h>
+#include <codecvt>
+#include <ShlObj.h>
+
 
 using namespace std;
+
+//string folderPath;
 
 vector<string> toIgnoreStarts = {
     "* [[",
@@ -102,13 +110,14 @@ bool containsSubstring(const std::string& mainStr, const std::string& subStr) {
     return mainStr.find(subStr) != std::string::npos;
 }
 
-void saveVectorToFile(const std::vector<std::string>& strings, std::string filename) {
+void saveVectorToFile(const std::vector<std::string>& strings, std::string filename, const std::string& folderPath) {
     // Hardcoded path where files will be saved
-    std::string path = "I:\\wikitxt\\";
+    std::string path = folderPath;
 
     // Appending the path to the filename
+    replaceAll(filename, "/", "_");
     filename = path + filename + ".txt";
-    replaceAll(filename,"/","_");
+    
 
     // Open the file
     std::ofstream outputFile(filename);
@@ -217,7 +226,7 @@ bool lineProcces(string& line) {
             }
             else if (substringAtPos(line, deleteBetween[i+1], j))
             {
-                printf("%s \n", whole.c_str());
+                //printf("%s \n", whole.c_str());
                 whole = deleteBetween[i] + whole + deleteBetween[i + 1];
                 replaceAll(lineCopy, whole, "");
                 readLine = false;
@@ -312,14 +321,122 @@ std::size_t utf8_len(const std::string& str) {
     return u32str.size() * sizeof(char32_t);
 }
 
-int main() {
+string getPath() {
+    OPENFILENAME ofn;       // common dialog box structure
+    wchar_t szFile[260] = { 0 };       // if using TCHAR and Unicode strings
 
-    test();
-    return 1;
+    // Initialize OPENFILENAME
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = NULL;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    //ofn.lpstrFilter = L"C++ Files\0*.cpp\0All Files\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFileTitle = NULL;
+    ofn.nMaxFileTitle = 0;
+    ofn.lpstrInitialDir = NULL;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+    // Display the Open File dialog and retrieve the filename from the Open File dialog.
+    std::wstring filePath;
+    if (GetOpenFileNameW(&ofn) == TRUE)
+    {
+        filePath = ofn.lpstrFile;
+        std::wcout << L"Selected file: " << filePath << std::endl;
+    }
+    else
+    {
+        std::wcout << L"No file selected." << std::endl;
+        throw exception("123");
+    }
+
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+    std::string narrowString = converter.to_bytes(filePath);
+
+    return narrowString;
+}
+
+std::string getFolderPath() {
+    BROWSEINFOW bi = { 0 };
+    bi.lpszTitle = L"Select a folder"; // Dialog title
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE; // Restrict selection to folders
+
+    wchar_t szDir[MAX_PATH] = { 0 }; // Buffer to store selected folder path
+
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi); // Show folder selection dialog
+
+    if (pidl != NULL) {
+        if (SHGetPathFromIDListW(pidl, szDir) == TRUE) { // Get selected folder path
+            std::wstring folderPath(szDir);
+            std::wcout << L"Selected folder: " << folderPath << std::endl;
+
+            // Convert wide string to narrow string
+            std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+            std::string narrowString = converter.to_bytes(folderPath);
+
+            return narrowString; // Return narrow string
+        }
+        else {
+            std::wcout << L"Failed to retrieve folder path." << std::endl;
+            return ""; // Return empty string on failure
+        }
+
+        CoTaskMemFree(pidl); // Free allocated memory for PIDL
+    }
+    else {
+        std::wcout << L"No folder selected." << std::endl;
+        throw std::exception("No folder selected."); // Throw exception if no folder selected
+    }
+}
+
+int getDataFromXml() {
+
     size_t lineCount = 0, pageCount = 0;
     // Path to the XML file
-    std::string filePath = "I:\\enwiki-20231220-pages-articles-multistream.xml";
-
+    std::string filePath;
+    while (true)
+    {
+        try
+        {
+            filePath = getPath();
+            break;
+        }
+        catch (const std::exception& e)
+        {
+            cout << "Bad file path" << endl;
+            printf("Do you wish to exit program? \n [y] - yes \n [n] - no \n");
+            string tstr;
+            cin >> tstr;
+            if (tstr == "y")
+            {
+                return 0;
+            }
+        }
+    }
+    string folderPath;
+    while (true)
+    {
+        try
+        {
+            folderPath = getFolderPath() + "\\";
+            //cout << folderPath << endl;
+            //return 1;
+            break;
+        }
+        catch (const std::exception& e)
+        {
+            cout << "Bad file path" << endl;
+            printf("Do you wish to exit program? \n [y] - yes \n [n] - no \n");
+            string tstr;
+            cin >> tstr;
+            if (tstr == "y")
+            {
+                return 0;
+            }
+        }
+    }
+    //return 1;
     // Open the XML file
     std::ifstream file(filePath);
 
@@ -377,8 +494,9 @@ int main() {
             saving = false;
             if (!redirect)
             {
-                saveVectorToFile(Page, pageTitle);
+                saveVectorToFile(Page, pageTitle, folderPath);
                 count++;
+
                 if (count > lastCounter + 17)
                 {
                     percent = (count / 6812260)*100;
@@ -404,7 +522,7 @@ int main() {
             //system("cls");
             //cout << line << endl << endl;
             //system("pause");
-            if (lineProcces(line))
+            if (true || lineProcces(line))
             {
                 //cout << line << endl << endl;
                 lineCount++;
@@ -448,5 +566,54 @@ whileSkip:;
     std::cout << std::endl << "Total lines read: " << bytesRead << std::endl;
 
     file.close();
+}
+
+std::vector<std::string> getFilesInFolder(const std::string& folderPath) {
+    std::vector<std::string> files;
+
+    try {
+        for (const auto& entry : std::filesystem::directory_iterator(folderPath)) {
+            if (std::filesystem::is_regular_file(entry.path())) {
+                files.push_back(entry.path().string());
+            }
+        }
+    }
+    catch (const std::exception& ex) {
+        std::cerr << "Error: " << ex.what() << std::endl;
+    }
+
+    return files;
+}
+
+int txtProcess() {
+    string folderPath = getFolderPath() + "\\";
+    std::vector < std::string> paths = getFilesInFolder(folderPath);
+    for (string i : paths) {
+        cout << i << endl;
+    }
+
+    return 1;
+}
+
+int main() {
+
+    string tstr;
+    printf("Welcome to wikiExtractor \n Choose what you want to do:\n[0] - Extract data from .xml to .txt\n[1] - Process .txt (delete hyperlink etc...)\n");
+    cin >> tstr;
+
+    switch (tstr[0])
+    {
+    default:
+        break;
+    case '0':
+        getDataFromXml();
+        break;
+    case '1':
+        txtProcess();
+        break;
+    }
+
+
+    
 }
 
