@@ -9,7 +9,7 @@
 #include <windows.h>
 #include <codecvt>
 #include <ShlObj.h>
-
+#include <thread>
 
 using namespace std;
 
@@ -51,6 +51,13 @@ vector<string> deleteBetween = {
     "<;ref", ";/ref>",
     "{{","}}"
 };
+
+vector<string> deleteFromFilename = {
+    "#","%","&","{","}","\\","< ",">","*","?","/","$","!","`","'", 
+    "\"",":","@","+","|","="
+};
+
+
 
 
 
@@ -115,10 +122,13 @@ void saveVectorToFile(const std::vector<std::string>& strings, std::string filen
     std::string path = folderPath;
 
     // Appending the path to the filename
-    replaceAll(filename, "/", "_");
+    
+    for (string illegal : deleteFromFilename) {
+        replaceAll(filename, illegal, "");
+    }
+
     filename = path + filename + ".txt";
     
-
     // Open the file
     std::ofstream outputFile(filename);
 
@@ -127,7 +137,7 @@ void saveVectorToFile(const std::vector<std::string>& strings, std::string filen
             outputFile << str << std::endl;
         }
         outputFile.close();
-        std::cout << "Successfully saved to " << filename << std::endl;
+        //std::cout << "Successfully saved to " << filename << std::endl;
     }
     else {
         std::cerr << "Unable to save: " << filename << std::endl;
@@ -390,16 +400,21 @@ std::string getFolderPath() {
     }
 }
 
-int getDataFromXml() {
-
-    size_t lineCount = 0, pageCount = 0;
-    // Path to the XML file
+string pickAPath() {
     std::string filePath;
     while (true)
     {
         try
         {
             filePath = getPath();
+
+            std::ifstream file(filePath);
+
+            if (!file.is_open()) {
+                std::cerr << "Error: Unable to open file " << filePath << std::endl;
+                throw;
+            }
+            file.close();
             break;
         }
         catch (const std::exception& e)
@@ -414,6 +429,11 @@ int getDataFromXml() {
             }
         }
     }
+
+    return filePath;
+}
+
+string pickAFolder() {
     string folderPath;
     while (true)
     {
@@ -436,33 +456,45 @@ int getDataFromXml() {
             }
         }
     }
-    //return 1;
-    // Open the XML file
+    return folderPath;
+}
+
+
+
+int getDataFromXml(const std::string filePath, const string folderPath, const int ID, const int numberOfThreads, size_t* pageCountPtr, vector<bool>* running) {
+    
+
     std::ifstream file(filePath);
+    file.seekg(0, std::ios::end);
+    size_t startPos = ((size_t)file.tellg() / numberOfThreads)*ID;
+    size_t endPos = ((size_t)file.tellg() / numberOfThreads) * (ID+1);
+    file.seekg(startPos, std::ios::beg);
+    string line;
 
-    // Check if the file is opened successfully
-    if (!file.is_open()) {
-        std::cerr << "Error: Unable to open file " << filePath << std::endl;
-        return 1; // Return error code
-    }
-
-    // Read and output the contents of the XML file
-    auto start = std::chrono::steady_clock::now();
     string pageTitle;
     vector<string> Page;
     bool saving = false;
-    double count = 0;
     bool redirect = false;
-    int lastCounter = 0;
-    double percent = 0.0;
-    double time_remaining = 0.0;
-    std::string line;
+
+    bool lastArticle = false;
+    //std::string line;
     //goto whileSkip;
+
+    while (true)
+    {
+        getline(file, line);
+        if (isValidFormat(line, "title")) 
+        {
+            goto found;
+        }
+    }
+
     while (std::getline(file, line))
     {
         
-        if (isValidFormat(line, "title")){
-        
+        if (isValidFormat(line, "title"))
+        {
+        found:;
             removeWhiteSpaces(line);
             replaceAll(line, "<title>", "");
             replaceAll(line, "</title>", "");
@@ -494,26 +526,23 @@ int getDataFromXml() {
             saving = false;
             if (!redirect)
             {
-                saveVectorToFile(Page, pageTitle, folderPath);
-                count++;
-
-                if (count > lastCounter + 17)
+                if (!Page.empty())
                 {
-                    percent = (count / 6812260)*100;
-                    cout << endl << "Article count: " << count << " Relevant lines count: " << lineCount << endl;
-                    cout << "Percent estimation: " << percent << "%" << endl;
-
-                    const auto end = std::chrono::steady_clock::now();
-                    const auto duration_msecs = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
-                    time_remaining = (100 - percent) / (percent / duration_msecs.count());
-                    printf("Time elapsed: %lld seconds. \n", duration_msecs.count()/1000);
-
-                    printf("Estimated time of completion: %f days, %f hours, %f minutes, %f seconds \n\n", time_remaining/(1000*60*60*24), time_remaining / (1000 * 60 * 60), time_remaining / (1000 * 60), time_remaining / (1000));
-                    lastCounter = count;
+                    saveVectorToFile(Page, pageTitle, folderPath);
+                    (*pageCountPtr)++;
                 }
             }
             Page.clear();
+
+            if (lastArticle)
+            {
+                break;
+            }
+            if (file.tellg() > endPos)
+            {
+                lastArticle = true;
+            }
+
             continue;
         }
 
@@ -525,7 +554,7 @@ int getDataFromXml() {
             if (true || lineProcces(line))
             {
                 //cout << line << endl << endl;
-                lineCount++;
+                //lineCount++;
                 //lineProcces(line);
                 Page.push_back(line);
             }
@@ -537,6 +566,7 @@ int getDataFromXml() {
     }
 
     file.close();
+    running->at(ID).flip();
 
     return 0; // Return success
 
@@ -585,8 +615,70 @@ std::vector<std::string> getFilesInFolder(const std::string& folderPath) {
     return files;
 }
 
-int txtProcess() {
-    string folderPath = getFolderPath() + "\\";
+void threadDataExtracionManager(const std::string& filePath, const string& folderPath) {
+
+    const int threadCount = 10;
+    vector<thread> threadsList(threadCount);
+    size_t articleCount = 0;
+    size_t lastCounter = 0;
+    double percent = 0.0;
+    auto start = std::chrono::steady_clock::now();
+    double time_remaining = 0.0;
+
+    vector<bool> running(threadCount);
+    bool allFinished = true;
+
+    for (size_t i = 0; i < threadCount; i++)
+    {
+        threadsList[i] = thread(getDataFromXml, filePath, folderPath, i, threadCount, &articleCount, &running);
+        running[i] = true;
+    }
+
+    while (true)
+    {
+        if (articleCount > lastCounter + 30)
+        {
+            //system("cls");
+            percent = ((double)articleCount / 6812260) * 100;
+            cout << endl << "Article count: " << articleCount << endl;
+            cout << "Percent estimation: " << percent << "%" << endl;
+
+            const auto end = std::chrono::steady_clock::now();
+            const auto duration_msecs = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+            time_remaining = (100 - percent) / (percent / duration_msecs.count());
+            
+            printf("Time elapsed: %lld seconds. \n", duration_msecs.count() / 1000);
+
+            printf("Estimated time of completion: %f days, %f hours, %f minutes, %f seconds \n\n", time_remaining / (1000 * 60 * 60 * 24), time_remaining / (1000 * 60 * 60), time_remaining / (1000 * 60), time_remaining / (1000));
+            lastCounter = articleCount;
+
+            
+
+        }
+        allFinished = true;
+        for (size_t i = 0; i < threadCount; i++)
+        {
+            if (running[i])
+            {
+                allFinished = false;
+            }
+        }
+        if (allFinished)
+        {
+            break;
+        }
+    }
+
+    for (size_t i = 0; i < threadCount; i++)
+    {
+        threadsList[i].join();
+    }
+    cout << "Finished" << endl;
+}
+
+int txtProcessThreadManager(string& folderPath) {
+    folderPath += "\\";
     std::vector < std::string> paths = getFilesInFolder(folderPath);
     for (string i : paths) {
         cout << i << endl;
@@ -600,20 +692,33 @@ int main() {
     string tstr;
     printf("Welcome to wikiExtractor \n Choose what you want to do:\n[0] - Extract data from .xml to .txt\n[1] - Process .txt (delete hyperlink etc...)\n");
     cin >> tstr;
-
+    string filePath, folderpath;
     switch (tstr[0])
     {
     default:
         break;
     case '0':
-        getDataFromXml();
+        
+        system("cls");
+        printf("Choose your wikipedia dump.xml location!\n");
+        filePath = pickAPath();
+        //system("cls");
+        printf("Choose your destination folder!\n");
+        folderpath = pickAFolder();
+        system("cls");
+
+        threadDataExtracionManager(filePath, folderpath);
+        //getDataFromXml(filePath, folderpath, 1, 2);
         break;
     case '1':
-        txtProcess();
+        system("cls");
+        printf("Choose your destination folder!\n");
+        folderpath = pickAFolder();
+        txtProcessThreadManager(folderpath);
         break;
     }
 
 
-    
+    return 0;
 }
 
